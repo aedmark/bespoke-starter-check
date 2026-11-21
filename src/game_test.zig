@@ -1,0 +1,96 @@
+//! Tests for starter_check: the script compiles, and its simulation does what the story needs.
+//! `zig build test` runs these from the project root. Add a test for each puzzle you write.
+const std = @import("std");
+const bespoke = @import("bespoke");
+const testing = std.testing;
+
+const SCRIPT_PATH = "scripts/main.bespoke";
+
+/// A compiled script with its world, ready to tick headless.
+const Game = struct {
+    source: []u8,
+    world: bespoke.World,
+    spatial: bespoke.SpatialSystem,
+    compiled: bespoke.CompiledProgram,
+    vm: bespoke.VM,
+
+    fn init(self: *Game) !void {
+        self.source = try std.Io.Dir.cwd().readFileAlloc(testing.io, SCRIPT_PATH, testing.allocator, .limited(1 << 20));
+        self.world = try bespoke.World.init(testing.allocator, bespoke.world.DEFAULT_ARENA_SIZE);
+        self.spatial = bespoke.SpatialSystem.init(testing.allocator);
+        self.compiled = try bespoke.compile_source(testing.allocator, &self.world, &self.spatial, self.source);
+        // The CI pin still supports v0.1.0, which predates the host constructor.
+        if (comptime @hasDecl(bespoke.host, "init_vm")) {
+            self.vm = try bespoke.host.init_vm(testing.allocator, &self.world, &self.spatial, &self.compiled);
+        } else {
+            self.vm = bespoke.VM.init(testing.allocator, &self.world, &self.compiled.chunk);
+            self.vm.spatial = &self.spatial;
+            try self.vm.load_compiled_rules(&self.compiled);
+        }
+        try bespoke.host.initialize_subsystems(&self.world, &self.compiled);
+        try bespoke.host.run_initial_statements(&self.world, &self.vm, &self.compiled);
+        try bespoke.host.place_cast(&self.spatial, &self.compiled);
+    }
+
+    fn deinit(self: *Game) void {
+        self.vm.deinit();
+        self.compiled.deinit();
+        self.spatial.deinit();
+        self.world.deinit();
+        testing.allocator.free(self.source);
+    }
+
+    /// Starts an actor's routine, placing the actor first if no scene lists it.
+    fn start(self: *Game, routine: []const u8, actor_name: []const u8) !void {
+        if (comptime @hasDecl(bespoke.host, "start_routine")) {
+            _ = try bespoke.host.start_routine(&self.world, &self.spatial, &self.vm, &self.compiled, routine, actor_name, 10);
+        } else {
+            // Match the startup behavior shipped with v0.1.0.
+            const actor = try self.world.intern_entity(actor_name);
+            if (!self.spatial.agents.contains(actor)) {
+                try self.spatial.register_entity(actor, self.spatial.graph.waypoints.items[0].id, 10);
+            }
+            _ = try self.vm.spawn_routine(actor, self.compiled.routine_entries.get(routine).?);
+        }
+    }
+
+    fn run(self: *Game, ticks: usize) !void {
+        for (0..ticks) |_| _ = try bespoke.host.tick(&self.vm, &self.compiled);
+    }
+
+    fn holds(self: *const Game, relation: []const u8, subject: []const u8, object: ?[]const u8) bool {
+        const rel = self.world.lookup_relation(relation) orelse return false;
+        const subj = self.world.lookup_entity(subject) orelse return false;
+        const obj: ?u32 = if (object) |o| (self.world.lookup_entity(o) orelse return false).to_int() else null;
+        return self.world.find_first(subj, rel, obj) != null;
+    }
+
+    fn score(self: *const Game) []const u8 {
+        const id = bespoke.display.current_score_entity(&self.world, self.vm.current_scene) orelse return "";
+        return self.world.get_entity_name(id) orelse "";
+    }
+};
+
+test "the script compiles" {
+    const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, SCRIPT_PATH, testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(source);
+    try testing.expect(bespoke.compiler.check_source(testing.allocator, source).is_valid);
+}
+
+test "the keeper intercepts the hero at the gallery, and the lit lamp brings the storm" {
+    var game: Game = undefined;
+    try game.init();
+    defer game.deinit();
+    try testing.expectEqualStrings("Tide", game.score());
+
+    try game.start("Explore", "Hero");
+    try game.start("Tend", "Keeper");
+    try game.run(40);
+    try testing.expect(game.holds("Investigated", "Hero", "Gallery"));
+    try testing.expect(game.holds("Warned", "Hero", null));
+    try testing.expectEqualStrings("Storm", game.score());
+
+    // The lamp's light lasts 30 ticks; then the scene's own music returns.
+    try game.run(40);
+    try testing.expectEqualStrings("Tide", game.score());
+}

@@ -1,0 +1,39 @@
+//! starter_check: runs scripts/main.bespoke in a BeSpoke window, or headless with `--headless`.
+//! Built with `-Dbundle`, it runs the compiled script embedded in the executable instead.
+const std = @import("std");
+const bespoke = @import("bespoke");
+const game_options = @import("game_options");
+
+pub const SCRIPT_PATH = "scripts/main.bespoke";
+
+pub fn main(init: std.process.Init) !void {
+    // The process supplies the allocator and the I/O that reads the script and runs the
+    // window's clock (Zig 0.16+).
+    const io = init.io;
+    const allocator = init.gpa;
+
+    var config = bespoke.runner.RunConfig{};
+    var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
+    defer args.deinit();
+    _ = args.next();
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--headless")) {
+            config.is_headless = true;
+        } else if (std.mem.eql(u8, arg, "--ticks")) {
+            const value = args.next() orelse return error.MissingTickCount;
+            config.ticks = try std.fmt.parseInt(usize, value, 10);
+        } else if (std.mem.eql(u8, arg, "--quiet")) {
+            config.verbose = false;
+        } else {
+            std.debug.print("usage: starter_check [--headless] [--ticks N] [--quiet]\n", .{});
+            return error.UnknownArgument;
+        }
+    }
+    var stdout_writer = std.Io.File.stdout().writer(io, &.{});
+    const stdout = &stdout_writer.interface;
+    if (game_options.bundled) {
+        try bespoke.runner.run_bytes(allocator, io, "starter_check", @embedFile("game_package"), config, stdout);
+    } else {
+        try bespoke.runner.run_file(allocator, io, SCRIPT_PATH, config, stdout);
+    }
+}

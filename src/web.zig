@@ -1,0 +1,10 @@
+//! starter_check in a browser: the engine's WebAssembly runtime running the compiled script, which
+//! the build embeds as `game_package`. `zig build web` writes zig-out/web/.
+const bespoke = @import("bespoke");
+
+comptime {
+    bespoke.wasm.export_runtime(&[_]bespoke.wasm.Deck{
+        // The typed-command bar (D-057, P34-04): Enter, then type a line such as "take the key".
+        bespoke.wasm.script_deck_with("starter_check", @embedFile("game_package"), .{ .command_bar = true }),
+    });
+}

@@ -1,0 +1,84 @@
+# starter_check
+
+A narrative game built on the [BeSpoke Engine](https://github.com/aedmark/bespoke-engine).
+
+## Layout
+
+| Path | Purpose |
+| --- | --- |
+| `scripts/main.bespoke` | The game: scenes, actors, routines, rules, dialogue, agendas, and music |
+| `src/main.zig` | The host: runs the script in a window, or headless |
+| `src/game_test.zig` | Tests that compile the script and check its simulation |
+| `src/web.zig`, `web/` | The browser version: the engine's WebAssembly runtime, a page, and a smoke check |
+| `.github/workflows/build.yml` | Builds and tests on Linux, macOS, and Windows, and builds the browser version |
+| `build.zig`, `build.zig.zon` | The build, with the engine as the `bespoke` dependency |
+
+## Commands
+
+Play while writing; the game reads `scripts/` each time it starts:
+
+```bash
+zig build run
+```
+
+```bash
+zig build run -- --headless --ticks 80
+```
+
+Check the story:
+
+```bash
+zig build test
+```
+
+Build a release. `-Dbundle` compiles the script with the engine's compiler and embeds it, so
+the executable in `zig-out/bin/` runs on its own:
+
+```bash
+zig build -Dbundle -Doptimize=ReleaseSafe
+```
+
+Build the browser version into `zig-out/web/`, check it, and serve it (a browser will not load
+the module from a `file://` page):
+
+```bash
+zig build web
+```
+
+```bash
+node web/smoke.js
+```
+
+```bash
+python3 -m http.server -d zig-out/web 8000
+```
+
+In the browser, click a mark to walk, right-click to change the verb, and press a number to
+answer a dialogue. Typed commands are not available there yet.
+
+## Requirements
+
+Zig 0.17.1 and the SDL2 development libraries (`libsdl2-dev` on Debian and Ubuntu, `sdl2` in
+Homebrew, `mingw-w64-x86_64-SDL2` in MSYS2 on Windows, building with
+`-Dtarget=x86_64-windows-gnu --search-prefix <msys64>/mingw64`). The browser build needs no
+SDL at run time; its build compiles the script with the engine's native tool. `node` is needed
+only for the smoke check.
+
+`build.zig.zon` points at the engine checkout used by `bespoke init`. Update `.path` if the
+engine moves. Both CI jobs fetch the released tag in `BESPOKE_ENGINE_REF` from GitHub.
+Test your game against a new release before changing that pin. To reproduce the CI engine
+version locally, point `.path` at a checkout of the same tag.
+
+## Licensing
+
+There is no project-wide license. Choose how to license your own code, writing, and art.
+[LICENSE-BeSpoke](LICENSE-BeSpoke) contains the MIT notice for BeSpoke and the starter
+files copied from it. Keep that notice with copies or substantial portions of BeSpoke
+that you distribute, including native bundles and browser builds that contain the engine.
+The BeSpoke notice encourages disclosure of agentic use and does not require it.
+
+## Next steps
+
+Change a line in `scripts/main.bespoke`, run `zig build test`, and add a test to
+`src/game_test.zig` for each puzzle you write. The engine's `docs/AUTHORING.md` teaches the
+language, and its `docs/script_spec.md` is the full reference.

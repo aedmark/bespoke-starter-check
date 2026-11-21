@@ -1,0 +1,103 @@
+const std = @import("std");
+
+// starter_check: a game built on the BeSpoke engine. The engine is the `bespoke` dependency in
+// build.zig.zon; its module carries the compiler, VM, display window, audio, and the browser
+// runtime.
+//
+//   zig build run                       the game in a window, reading scripts/ live
+//   zig build test                      compile the script and check its story
+//   zig build -Dbundle                  an executable with the compiled script inside it
+//   zig build web                       zig-out/web/: the game for a browser
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const bundle = b.option(bool, "bundle", "Embed the compiled script in the executable, so it needs no scripts/ folder") orelse false;
+    const engine = b.dependency("bespoke", .{ .target = target, .optimize = optimize });
+    const bespoke = engine.module("bespoke");
+
+    const options = b.addOptions();
+    options.addOption(bool, "bundled", bundle);
+
+    const exe = b.addExecutable(.{
+        .name = "starter_check",
+        // Native builds link SDL2 and libc, which Zig's own linker cannot yet handle.
+        .use_llvm = true,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    exe.root_module.addImport("bespoke", bespoke);
+    exe.root_module.addOptions("game_options", options);
+    if (bundle) exe.root_module.addAnonymousImport("game_package", .{ .root_source_file = compiled_package(b) });
+    exe.root_module.link_libc = true;
+    exe.root_module.linkSystemLibrary("SDL2", .{});
+    b.installArtifact(exe);
+
+    // Without -Dbundle the game reads scripts/ at run time, so run it from the project root.
+    const run_cmd = b.addRunArtifact(exe);
+    run_cmd.setCwd(b.path("."));
+    run_cmd.step.dependOn(b.getInstallStep());
+    run_cmd.addPassthruArgs();
+    const run_step = b.step("run", "Run the game (add -- --headless --ticks N for a text run)");
+    run_step.dependOn(&run_cmd.step);
+
+    const tests = b.addTest(.{
+        // Native builds link SDL2 and libc, which Zig's own linker cannot yet handle.
+        .use_llvm = true,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/game_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    tests.root_module.addImport("bespoke", bespoke);
+    tests.root_module.link_libc = true;
+    tests.root_module.linkSystemLibrary("SDL2", .{});
+    const run_tests = b.addRunArtifact(tests);
+    run_tests.setCwd(b.path("."));
+    const test_step = b.step("test", "Compile the game script and check its simulation");
+    test_step.dependOn(&run_tests.step);
+
+    // The browser build: the engine's wasm runtime with the compiled script embedded, plus a
+    // page that draws it. Serve zig-out/web/ over HTTP and open index.html.
+    const wasm_target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
+    const web_engine = b.dependency("bespoke", .{ .target = wasm_target, .optimize = .ReleaseSmall });
+    const web = b.addExecutable(.{
+        .name = "starter_check",
+        // Native builds link SDL2 and libc, which Zig's own linker cannot yet handle.
+        .use_llvm = true,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/web.zig"),
+            .target = wasm_target,
+            .optimize = .ReleaseSmall,
+        }),
+    });
+    web.root_module.addImport("bespoke", web_engine.module("bespoke"));
+    web.root_module.addAnonymousImport("game_package", .{ .root_source_file = compiled_package(b) });
+    web.entry = .disabled;
+    web.rdynamic = true;
+    // The runtime is returned by value on start; the default 1 MB wasm stack is too small.
+    web.stack_size = 8 * 1024 * 1024;
+    const web_dir: std.Build.InstallDir = .{ .custom = "web" };
+    const web_step = b.step("web", "Build the game for a browser into zig-out/web/");
+    web_step.dependOn(&b.addInstallArtifact(web, .{ .dest_dir = .{ .override = web_dir } }).step);
+    web_step.dependOn(&b.addInstallFileWithDir(b.path("web/index.html"), web_dir, "index.html").step);
+}
+
+var package_cache: ?std.Build.LazyPath = null;
+
+/// scripts/main.bespoke compiled to a .bspk package by the engine's own `bespoke compile`, built
+/// for the machine running the build. A script error fails the build here.
+fn compiled_package(b: *std.Build) std.Build.LazyPath {
+    if (package_cache) |path| return path;
+    const tools = b.dependency("bespoke", .{ .target = b.graph.host, .optimize = .ReleaseSafe });
+    const compile = b.addRunArtifact(tools.artifact("bespoke"));
+    compile.addArg("compile");
+    compile.addFileArg(b.path("scripts/main.bespoke"));
+    compile.addArg("-o");
+    const path = compile.addOutputFileArg("game.bspk");
+    package_cache = path;
+    return path;
+}
