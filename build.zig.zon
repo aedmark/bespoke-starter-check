@@ -1,7 +1,7 @@
 .{
     .name = .starter_check,
     // The package's identity (Zig 0.14+): generated once by `bespoke init`; never change it.
-    .fingerprint = 0x0527ec36f85580eb,
+    .fingerprint = 0x0527ec36caa8c806,
     .version = "0.1.0",
     // The engine's own minimum; the CI workflow pins the same release.
     .minimum_zig_version = "0.17.1",
